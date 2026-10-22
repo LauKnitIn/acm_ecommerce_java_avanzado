@@ -66,7 +66,7 @@ jobs:
           done
           sleep 3
           echo "¡PostgreSQL está listo y aceptando conexiones!"
-          
+
       - name: Diagnóstico DB
         run: |
           docker ps

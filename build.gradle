@@ -2,6 +2,7 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.0.5'
 	id 'io.spring.dependency-management' version '1.1.7'
+	id ("org.sonarqube") version "7.5.0.8588"
 }
 
 group = 'com.acm'
@@ -11,6 +12,14 @@ java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(25)
 	}
+}
+
+sonar {
+    properties {
+        property "sonar.projectKey", "LauKnitIn_acm_ecommerce_java_avanzado"
+        property "sonar.organization", "lauknitin"
+        property "sonar.host.url", "https://sonarcloud.io"
+    }
 }
 
 repositories {

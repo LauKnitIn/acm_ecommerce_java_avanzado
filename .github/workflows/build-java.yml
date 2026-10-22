@@ -1,160 +1,167 @@
-name: CI
+name: build-app
 
 on:
-  push:
-    branches: [ "*" ]
   pull_request:
-    branches: [ "*" ]
+    branches: [main, master]
 
-# Concurrency: cancel older runs for the same branch/PR
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    # -----------------------------------------------------------------------
-    # Permisos necesarios para subir (push) la imagen Docker a GitHub Packages
-    # -----------------------------------------------------------------------
-    permissions:
-      contents: read
-      packages: write
-    # NOTE: No "services:" block here.
-    # PostgreSQL is started inside a step (step 5) so that
-    # ${{ secrets.* }} are available when the container is created.
-
     steps:
-      # ---------------------------------------------------------------
-      # 1 Checkout repository
-      # ---------------------------------------------------------------
       - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # ---------------------------------------------------------------
-      # 2 Set up JDK 21 (Temurin)
-      # ---------------------------------------------------------------
-      - name: Set up JDK 21 (Temurin)
-        uses: actions/setup-java@v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
-          distribution: "temurin"
-          java-version: "21"
-          cache: "gradle"
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
 
-      # ---------------------------------------------------------------
-      # 3 Make Gradle wrapper executable
-      # ---------------------------------------------------------------
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x ./gradlew
 
-      # ---------------------------------------------------------------
-      # 4 Cache Gradle dependencies
-      # ---------------------------------------------------------------
-      - name: Cache Gradle dependencies
-        uses: actions/cache@v4
+      - name: Build with Gradle (skip tests)
+        run: ./gradlew build -x test
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          name: app-jar
+          path: build/libs/*-SNAPSHOT.jar
+          if-no-files-found: error
 
-      # ---------------------------------------------------------------
-      # Check if secrets are loading (Debugging)
-      # ---------------------------------------------------------------
-      - name: Verify Secrets Context
-        run: |
-          echo "Verificando si los secrets están llegando al runner..."
-          if [ -z "${{ secrets.DB_PASSWORD }}" ]; then
-            echo "❌ ERROR: DB_PASSWORD está vacío. GitHub no está inyectando el secret."
-          else
-            echo "✅ DB_PASSWORD detectado correctamente."
-          fi
+  test:
+    name: test
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:${{ secrets.DB_PORT }}/${{ secrets.DB_NAME }}
+      SPRING_DATASOURCE_USERNAME: ${{ secrets.DB_USER }}
+      SPRING_DATASOURCE_PASSWORD: ${{ secrets.DB_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # ---------------------------------------------------------------
-      # 5 Start PostgreSQL via docker run
-      # Using a step (not services:) so GitHub Secrets are available.
-      # ---------------------------------------------------------------
+      - name: Set up JDK 25
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x ./gradlew
+
       - name: Start PostgreSQL
         run: |
-          docker run -d \
-            --name postgres \
-            -e POSTGRES_DB="${{ secrets.DB_NAME }}" \
-            -e POSTGRES_USER="${{ secrets.DB_USER }}" \
-            -e POSTGRES_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-            -p 5434:5432 \
+          docker run -d --name postgres \
+            -e POSTGRES_DB="$DB_NAME" \
+            -e POSTGRES_USER="$DB_USER" \
+            -e POSTGRES_PASSWORD="$DB_PASSWORD" \
+            -p "$DB_PORT":5432 \
             postgres:16-alpine
+          until docker exec postgres pg_isready -U "$DB_USER" -d "$DB_NAME"; do sleep 2; done
 
-          echo "Waiting for PostgreSQL to be ready..."
-          for i in {1..15}; do
-            if docker exec postgres pg_isready -U "${{ secrets.DB_USER }}" > /dev/null 2>&1; then
-              echo "PostgreSQL is ready!"
-              exit 0
-            fi
-            # Check if container died
-            if [ "$(docker inspect -f '{{.State.Running}}' postgres)" != "true" ]; then
-              echo "Container stopped unexpectedly. Logs:"
-              docker logs postgres
-              exit 1
-            fi
-            echo "Waiting..."
-            sleep 2
-          done
-          echo "Timed out waiting for PostgreSQL. Logs:"
-          docker logs postgres
-          exit 1
+      - name: Run tests
+        run: ./gradlew test
 
-      # ---------------------------------------------------------------
-      # 6 Build and run tests
-      # Env vars override application.yaml and point to the container above.
-      # ---------------------------------------------------------------
-      - name: Build and run tests
-        env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5434/${{ secrets.DB_NAME }}
-          SPRING_DATASOURCE_USERNAME: ${{ secrets.DB_USER }}
-          SPRING_DATASOURCE_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: ./gradlew clean build --no-daemon
-
-      # ---------------------------------------------------------------
-      # 7 Upload test reports (always, even on failure)
-      # ---------------------------------------------------------------
-      - name: Upload test reports
-        if: always()
-        uses: actions/upload-artifact@v4
+  sonar:
+    name: sonar
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          name: test-reports
-          path: build/reports/tests/**
-          retention-days: 14
+          fetch-depth: 0   # Sonar necesita el historial completo
 
-      # ---------------------------------------------------------------
-      # 8 Upload application JAR artifact
-      # ---------------------------------------------------------------
-      - name: Upload build artifact (JAR)
-        if: success()
-        uses: actions/upload-artifact@v4
+      - name: Set up JDK 25
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
-          name: application-artifact
-          path: build/libs/*.jar
-          retention-days: 14
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
 
-      # ---------------------------------------------------------------
-      # 9 OPTIONAL: Build and push Docker image (push events only)
-      # ---------------------------------------------------------------
-      - name: Build Docker image
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
-        run: docker build -t acm-ecommerce:${{ github.sha }} .
+      - name: Cache Sonar packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4        with:
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
 
-      - name: Push Docker image to GHCR
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x ./gradlew
+
+      - name: SonarCloud analysis
         env:
-          REGISTRY: ghcr.io
-          IMAGE_NAME: ${{ github.repository }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ./gradlew build sonar -x test --info
+
+  docker:
+    name: docker
+    needs: [test, sonar]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x ./gradlew
+        
+      - name: Download JAR
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: app-jar
+          path: build/libs
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version and short SHA
+        id: ver
         run: |
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
-          docker tag acm-ecommerce:${{ github.sha }} $REGISTRY/$IMAGE_NAME:${{ github.sha }}
-          docker push $REGISTRY/$IMAGE_NAME:${{ github.sha }}
+          VERSION=$(./gradlew -q properties | grep '^version:' | awk '{print $2}')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          SHA=${{ github.event.pull_request.head.sha }}
+          echo "short_sha=${SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Image metadata (lowercase tags)
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.ver.outputs.short_sha }}
+            type=raw,value=${{ steps.ver.outputs.version }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

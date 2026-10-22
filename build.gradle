@@ -16,8 +16,8 @@ java {
 
 sonar {
     properties {
-        property "sonar.projectKey", "TU_PROJECT_KEY"
-        property "sonar.organization", "TU_ORGANIZACION"
+        property "sonar.projectKey", "LauKnitIn_acm_ecommerce_java_avanzado"
+        property "sonar.organization", "lauknitin"
         property "sonar.host.url", "https://sonarcloud.io"
     }
 }

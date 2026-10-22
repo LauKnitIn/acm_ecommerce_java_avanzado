@@ -1,2 +1,2 @@
 pruebaUno 
-resultado? nop
+resultado? nop*2

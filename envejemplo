@@ -1,0 +1,10 @@
+# Base de datos PostgreSQL (Usadas por docker-compose.yaml)
+DB_NAME=ecommerce
+DB_USER=store
+DB_PASSWORD=123456
+DB_PORT=5434
+
+# Configuración para Spring Boot (Usadas si levantas la app localmente desde el IDE o Gradle)
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5434/ecommerce
+SPRING_DATASOURCE_USERNAME=store
+SPRING_DATASOURCE_PASSWORD=123456

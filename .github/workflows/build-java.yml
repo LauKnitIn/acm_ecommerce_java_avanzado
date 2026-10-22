@@ -51,9 +51,16 @@ jobs:
 
       - name: Start PostgreSQL container for tests
         run: |
-          docker run -d --name postgres -e POSTGRES_DB=${{ secrets.DB_NAME }} -e POSTGRES_USER=${{ secrets.DB_USER }} -e POSTGRES_PASSWORD=${{ secrets.DB_PASSWORD }} -p 5434:5432 postgres:16-alpine
+          docker run -d \
+            --name postgres \
+            --env POSTGRES_DB="${{ secrets.DB_NAME }}" \
+            --env POSTGRES_USER="${{ secrets.DB_USER }}" \
+            --env POSTGRES_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            -p 5434:5432 \
+            postgres:16-alpine
+
           echo "Esperando a que PostgreSQL esté listo..."
-          until docker exec postgres pg_isready -U ${{ secrets.DB_USER }}; do
+          until docker exec postgres pg_isready -U "${{ secrets.DB_USER }}"; do
             sleep 2
           done
           echo "¡PostgreSQL está listo y aceptando conexiones!"

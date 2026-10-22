@@ -1,17 +1,15 @@
-name: pipeline-ci
+name: build-app
 
 on:
   pull_request:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: build-app
+    name: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -20,14 +18,14 @@ jobs:
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
-          cache: 'gradle'
+          cache: gradle
 
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x ./gradlew
 
-      - name: Build with Gradle (Skip Tests)
+      - name: Build with Gradle (skip tests)
         run: ./gradlew build -x test
 
   test:
@@ -43,13 +41,18 @@ jobs:
       SPRING_DATASOURCE_USERNAME: ${{ secrets.DB_USER }}
       SPRING_DATASOURCE_PASSWORD: ${{ secrets.DB_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
-      - run: chmod +x ./gradlew
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x ./gradlew
 
       - name: Start PostgreSQL
         run: |
@@ -61,15 +64,11 @@ jobs:
             postgres:16-alpine
           until docker exec postgres pg_isready -U "$DB_USER" -d "$DB_NAME"; do sleep 2; done
 
-      - name: Verify DB connection (TCP + password)
-        env:
-          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
-        run: psql -h localhost -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "select 1"
-
-      - run: ./gradlew test
+      - name: Run tests
+        run: ./gradlew test
 
   docker:
-    name: build-docker-image
+    name: docker
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -86,9 +85,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and Push Docker image
+      - name: Image metadata (lowercase tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
